@@ -1,0 +1,75 @@
+# Cell configuration for the Dobot Nova 2 VLA pick-and-place.
+# Every key is optional (defaults in nova2_vla/config.py); unknown keys are an error.
+# Lengths in metres, angles in degrees, unless a name says otherwise.
+
+robot:
+  ip: 192.168.5.1
+  # The table surface in the base frame. REQUIRED on the real robot: with tool 0
+  # selected, jog the tool tip onto the table, read the flange Z on the pendant,
+  # subtract 197 mm, convert to metres. Dry runs use -0.05 if this is empty.
+  table_z_m: null
+  # table_x_range_m: [-0.70, 0.10]   # table footprint, if places are beside / below it
+  # table_y_range_m: [-0.60, 0.60]
+  speed: 20           # MovJ %
+  line_speed: 10      # MovL %
+  realtime_feedback: true
+
+gripper:
+  type: feetech       # fake = no gripper (bench tests)
+  port: /dev/ttyUSB1  # left arm (192.168.5.1): ID 21 on ttyUSB1; right: ID 22 on ttyUSB0
+  servo_id: 21
+  torque_limit: 300
+  max_opening_m: 0.08
+
+cameras:
+  wrist:              # on the flange: the twin's camera frame (z = view axis)
+    type: realsense
+    serial: null      # null = first RealSense found
+    width: 640
+    height: 480
+    fps: 30
+    depth: true
+    mount: wrist
+  # scene:            # optional fixed camera: gives the VLA context (not used for locating)
+  #   type: opencv
+  #   index: 4
+  #   width: 640
+  #   height: 480
+  #   depth: false
+  #   mount: fixed
+
+perception:
+  proposer: depth+owlv2     # depth (no model) and/or owlv2 (GPU)
+  embedder: dinov2          # dinov2 (GPU) or color_hist
+  device: cuda
+  min_similarity: 0.55
+
+vla:
+  # A LeRobot checkpoint fine-tuned on this cell, e.g.
+  # outputs/train/nova2_smolvla/checkpoints/last/pretrained_model
+  # Leave null to run scripted grasps only (and collect demos).
+  policy_path: null
+  device: cuda
+  fps: 15                   # must match the dataset it was trained on
+  execute_steps: 10
+  max_steps: 450
+  task_template: "pick up the {description}"
+
+pick:
+  strategy: vla_with_fallback   # vla | scripted | vla_with_fallback
+  hover_height_m: 0.15
+  grasp_depth_m: 0.02
+  grasp_yaw_offset_deg: 0       # 90 if the fingers close along the flange's y axis
+
+safety:
+  max_joint_step_deg: 2.0
+  max_joint_speed_deg_s: 45
+  max_tilt_deg: 45
+  pick_zone_radius_m: 0.08
+
+paths:
+  objects_dir: objects
+  locations_file: config/locations.json
+  runs_dir: runs
+  dataset_root: data/nova2_picks
+  dataset_repo_id: local/nova2_picks

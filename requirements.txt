@@ -1,0 +1,7 @@
+# core (robot, planning, depth-based detection, dry runs); see pyproject.toml extras for the rest:
+#   pip install -e ".[vision,realsense,vla]"
+numpy>=1.24
+pyyaml>=6.0
+opencv-python-headless>=4.9
+pillow>=10.0
+pyserial>=3.4
