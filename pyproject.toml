@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nova2-vla"
+version = "0.1.0"
+description = "VLA pick and place for the Dobot Nova 2: reference-image object grounding, a LeRobot VLA for the grasp, table-safe IK for everything else"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "numpy>=1.24",
+    "pyyaml>=6.0",
+    "opencv-python-headless>=4.9",
+    "pillow>=10.0",
+    "pyserial>=3.4",          # Feetech gripper (scservo_sdk in the twin)
+]
+
+[project.optional-dependencies]
+# OWLv2 proposals + DINOv2 matching of the reference photos (GPU)
+vision = ["torch>=2.7", "transformers>=4.45"]
+# Intel RealSense wrist camera
+realsense = ["pyrealsense2>=2.55"]
+# the VLA: LeRobot with SmolVLA, dataset recording and training
+vla = ["lerobot[smolvla,dataset,training]==0.7.0"]
+dev = ["pytest>=8"]
+
+[project.scripts]
+nova2-vla = "nova2_vla.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["nova2_vla*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

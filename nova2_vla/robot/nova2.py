@@ -1,0 +1,105 @@
+"""
+Nova 2 client for closed-loop control: the twin's DobotTCP (dashboard port
+29999: enable, MovJ / MovL with reach checks, GetAngle, GetPose, alarms)
+plus what a learned policy needs:
+
+    ServoJ(J1..J6, t, aheadtime, gain)   joint set-point streaming, ~33 Hz
+    StartDrag() / StopDrag()             hand-guiding, for recording demos
+    port 30004                           joints every 8 ms (RealtimeFeedback)
+"""
+
+import time
+
+import numpy as np
+
+from ..twin import (
+    MODE_COLLISION, MODE_DISABLED, MODE_ERROR, MODE_IDLE, MODE_NAMES, MODE_POWER_OFF,
+    SERVO_LIMITS_DEG, DobotError, DobotTCP,
+)
+from .feedback import RealtimeFeedback
+
+MODE_DRAG = 6
+
+
+def check_joints(servo_deg):
+    q = np.asarray(servo_deg, dtype=float).reshape(6)
+    lo, hi = SERVO_LIMITS_DEG[:, 0], SERVO_LIMITS_DEG[:, 1]
+    bad = np.where((q < lo) | (q > hi) | ~np.isfinite(q))[0]
+    if bad.size:
+        raise DobotError("target outside the joint limits: " + ", ".join(
+            f"J{i + 1}={q[i]:.2f} (limits {lo[i]:.0f}..{hi[i]:.0f})" for i in bad))
+    return q
+
+
+class Nova2(DobotTCP):
+    def __init__(self, ip="192.168.5.1", port=29999, feedback_port=30004, realtime_feedback=True, **kw):
+        super().__init__(ip, port, **kw)
+        self.feedback_port = feedback_port
+        self.use_feedback = realtime_feedback
+        self.feedback = None
+
+    def connect(self):
+        super().connect()
+        if self.use_feedback and self.feedback is None:
+            try:
+                self.feedback = RealtimeFeedback(self.ip, self.feedback_port).start()
+            except OSError as e:
+                print(f"note: no real-time feedback on port {self.feedback_port} ({e}); polling GetAngle")
+                self.feedback = None
+        return self
+
+    def close(self):
+        if self.feedback:
+            self.feedback.stop()
+            self.feedback = None
+        super().close()
+
+    # ------------------------------------------------------------ state
+    def joints(self):
+        """Current joint angles [deg]: from port 30004 when it is fresh,
+        else GetAngle."""
+        fb = self.feedback.fresh(0.05) if self.feedback else None
+        return fb.q_actual.copy() if fb is not None else self.get_angle()
+
+    def mode_fast(self):
+        fb = self.feedback.fresh(0.05) if self.feedback else None
+        return fb.robot_mode if fb is not None else self.robot_mode()
+
+    def check_ok(self, what="robot"):
+        mode = self.mode_fast()
+        if mode in (MODE_ERROR, MODE_COLLISION):
+            raise DobotError(f"{what}: robot {MODE_NAMES[mode]} (alarms {self.error_ids()})", mode)
+        if mode in (MODE_POWER_OFF, MODE_DISABLED):
+            raise DobotError(f"{what}: robot {MODE_NAMES[mode]}", mode)
+        return mode
+
+    def wait_idle(self, timeout=5.0, what="settle"):
+        """Wait until the motion queue is empty (RobotMode 5)."""
+        t0 = time.monotonic()
+        while True:
+            mode = self.robot_mode()
+            if mode == MODE_IDLE:
+                return
+            if mode in (MODE_ERROR, MODE_COLLISION, MODE_POWER_OFF, MODE_DISABLED):
+                self.check_ok(what)
+            if time.monotonic() - t0 > timeout:
+                raise DobotError(f"{what}: robot still {MODE_NAMES.get(mode, mode)} after {timeout:.0f} s")
+            time.sleep(0.02)
+
+    # ------------------------------------------------------------ streaming
+    def servo_j(self, servo_deg, t=0.03, aheadtime=50.0, gain=500.0):
+        """One ServoJ set-point; the controller reaches it in t seconds.
+        Call it every t seconds with points that are already rate-limited
+        (ServoStreamer does)."""
+        q = check_joints(servo_deg)
+        if not 0.004 <= t <= 3600.0:
+            raise DobotError(f"ServoJ t={t} outside 0.004..3600 s")
+        args = ",".join(f"{a:.4f}" for a in q)
+        return self.send(f"ServoJ({args},t={t:.3f},aheadtime={aheadtime:.1f},gain={gain:.1f})")
+
+    # ------------------------------------------------------------ hand guiding
+    def start_drag(self):
+        self.send("StartDrag()")
+
+    def stop_drag(self):
+        self.send("StopDrag()")

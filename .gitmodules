@@ -1,0 +1,3 @@
+[submodule "third_party/manipulator-agent"]
+	path = third_party/manipulator-agent
+	url = https://github.com/raghulrajg/manipulator-agent.git
