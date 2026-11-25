@@ -113,7 +113,7 @@ def build(cfg, args, log=print) -> Cell:
 
     jitter = (getattr(args, "jitter_cm", 0.0) / 100.0, getattr(args, "jitter_deg", 0.0))
     s.cell = PickPlaceCell(cfg, robot, gripper, rig, finder, ObjectLibrary(objects_dir),
-                           LocationLibrary.load(cfg.path(cfg.paths.locations_file)), policy,
+                           LocationLibrary.load(cfg.path(cfg.paths.locations_file), cfg.robot.table_z_m), policy,
                            recorder=sampler, record_vla=getattr(args, "record", False),
                            hover_jitter=jitter, log=log)
     s.cell.startup()
@@ -194,7 +194,7 @@ def cmd_list(cfg, args):
             print(f"object   {name:<24} {len(spec.images)} reference image(s)  \"{spec.description}\"")
     except TaskError as e:
         print(f"objects: {e}")
-    locs = LocationLibrary.load(cfg.path(cfg.paths.locations_file))
+    locs = LocationLibrary.load(cfg.path(cfg.paths.locations_file), cfg.robot.table_z_m)
     for name in locs.names():
         l = locs.get(name)
         print(f"location {name:<24} x {l.x * 1000:7.1f}  y {l.y * 1000:7.1f}  z {l.z * 1000:7.1f} mm  "
@@ -243,7 +243,7 @@ def cmd_check(cfg, args):
     if cfg.robot.table_z_m is not None:
         from .pipeline import PickPlaceCell
         cell = PickPlaceCell(cfg, None, None, None, None, None, None, log=lambda m: None)   # planning only
-        locs = LocationLibrary.load(cfg.path(cfg.paths.locations_file))
+        locs = LocationLibrary.load(cfg.path(cfg.paths.locations_file), cfg.robot.table_z_m)
         for name in locs.names():
             try:
                 cell.precheck_location(locs.get(name))

@@ -7,7 +7,7 @@ name = "nova2-vla"
 version = "0.1.0"
 description = "VLA pick and place for the Dobot Nova 2: reference-image object grounding, a LeRobot VLA for the grasp, table-safe IK for everything else"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.10"   # the [vla] extra (LeRobot 0.7) needs 3.12+
 dependencies = [
     "numpy>=1.24",
     "pyyaml>=6.0",

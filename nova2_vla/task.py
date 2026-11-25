@@ -20,6 +20,8 @@ The operator's request and what it refers to.
   z_reference "surface" (default): z is the surface the object is put on,
   and the release height follows from where the object was gripped;
   "tool": z is the gripper tip height at release.
+  "z": "table" puts it on the table itself, at robot.table_z_m from the
+  cell config, so re-measuring the table moves every such place with it.
   A location may also be a list [x, y, z, w], and may override z_reference.
 """
 
@@ -172,7 +174,8 @@ class LocationLibrary:
         return _lookup(name, self.locations, f"location in {self.source}")
 
     @classmethod
-    def load(cls, path) -> "LocationLibrary":
+    def load(cls, path, table_z=None) -> "LocationLibrary":
+        """table_z: the table height [m], for locations with "z": "table"."""
         path = Path(path)
         if not path.exists():
             raise TaskError(f"locations file {path} does not exist")
@@ -180,10 +183,10 @@ class LocationLibrary:
             data = json.loads(path.read_text())
         except json.JSONDecodeError as e:
             raise TaskError(f"{path}: {e}") from None
-        return cls(cls.parse(data, str(path)), str(path))
+        return cls(cls.parse(data, str(path), table_z), str(path))
 
     @staticmethod
-    def parse(data, source="locations") -> Dict[str, Location]:
+    def parse(data, source="locations", table_z=None) -> Dict[str, Location]:
         if not isinstance(data, dict):
             raise TaskError(f"{source}: expected a JSON object")
         units = data.get("units", "mm")
@@ -218,12 +221,20 @@ class LocationLibrary:
                 ref = v.get("z_reference", ref)
             else:
                 raise TaskError(f"{where}: expected {{x, y, z, w}} or [x, y, z, w]")
+            if ref not in ("surface", "tool"):
+                raise TaskError(f"{where}: z_reference must be 'surface' or 'tool'")
+            on_table = isinstance(z, str) and z.strip().lower() == "table"
+            if on_table:
+                if ref != "surface":
+                    raise TaskError(f"{where}: \"z\": \"table\" needs z_reference 'surface' "
+                                    "(the gripper tip can't go down to the table)")
+                if table_z is None:
+                    raise TaskError(f"{where}: \"z\": \"table\" needs robot.table_z_m in the cell config")
+                z = 0.0
             try:
                 x, y, z, w = (float(a) for a in (x, y, z, w))
             except (TypeError, ValueError):
-                raise TaskError(f"{where}: x, y, z, w must be numbers") from None
-            if ref not in ("surface", "tool"):
-                raise TaskError(f"{where}: z_reference must be 'surface' or 'tool'")
+                raise TaskError(f"{where}: x, y, w must be numbers, z a number or \"table\"") from None
             # catch the wrong unit: the Nova 2 reaches 625 mm
             biggest = max(abs(x), abs(y), abs(z))
             if units == "mm" and 0 < biggest < 5:
@@ -232,5 +243,6 @@ class LocationLibrary:
             if units == "m" and biggest > 5:
                 raise TaskError(f"{where}: ({x}, {y}, {z}) m is out of reach -- "
                                 "the file looks like millimetres: set \"units\": \"mm\"")
-            out[str(name)] = Location(str(name), x * scale, y * scale, z * scale, w, ref)
+            z = float(table_z) if on_table else z * scale
+            out[str(name)] = Location(str(name), x * scale, y * scale, z, w, ref)
         return out

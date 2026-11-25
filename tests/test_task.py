@@ -102,3 +102,16 @@ def test_camera_rename_map():
     assert camera_rename_map([w], []) == {}
     with pytest.raises(ValueError, match="more"):
         camera_rename_map([w, s], ["observation.images.top"])      # 2 cameras, model takes 1
+
+
+def test_location_on_the_table():
+    locs = LocationLibrary.parse({"units": "mm", "locations": {
+        "bin": {"x": -250, "y": 400, "z": "table", "w": 0},
+        "jig": {"x": -300, "y": 100, "z": 120, "w": 0, "z_reference": "tool"}}}, table_z=0.018)
+    assert locs["bin"].z == pytest.approx(0.018) and locs["bin"].z_reference == "surface"
+    assert locs["jig"].z == pytest.approx(0.12)
+    with pytest.raises(TaskError, match="table_z_m"):
+        LocationLibrary.parse({"locations": {"bin": {"x": -250, "y": 400, "z": "table", "w": 0}}})
+    with pytest.raises(TaskError, match="z_reference 'surface'"):
+        LocationLibrary.parse({"locations": {"bin": {"x": -250, "y": 400, "z": "TABLE", "w": 0,
+                                                     "z_reference": "tool"}}}, table_z=0.018)

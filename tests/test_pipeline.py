@@ -144,7 +144,7 @@ def test_unreachable_location_is_refused_before_moving(make_cell):
     s = make_cell("vla")
     before = len(_motions(s))
     r = s.cell.run("pick the object 'red_block' place the 'far_away'")
-    assert r.state == "rejected" and "out of reach" in r.detail
+    assert r.state == "rejected" and "can't be reached" in r.detail and "out of the arm's reach" in r.detail
     assert len(_motions(s)) == before          # the arm never moved
     assert s.world.box("red_block").held_offset is None
 
@@ -285,3 +285,16 @@ def test_cli_dry_run(tmp_path, capsys):
     assert "DONE" in capsys.readouterr().out
     assert main(["--config", str(cfg), "--dry-run", "run", "pick the object 'nothing' place the 'tray_C'"]) == 2
     assert main(["--config", str(cfg), "list"]) == 0
+
+
+def test_place_below_the_table_is_explained():
+    from nova2_vla.pipeline import PickPlaceCell
+    from nova2_vla.task import Location, TaskError
+    cfg = load_config(None, {"robot": {"table_z_m": 0.018}})
+    cell = PickPlaceCell(cfg, None, None, None, None, None, None, log=lambda m: None)   # planning only
+    with pytest.raises(TaskError, match=r"68 mm below the table .*\"z\": \"table\""):
+        cell.precheck_location(Location("bin_A", -0.25, 0.40, -0.05, 0.0, "surface"))
+    cell.precheck_location(Location("bin_A", -0.25, 0.40, 0.018, 0.0, "surface"))      # on the table: fine
+    cfg = load_config(None, {"robot": {"table_z_m": 0.018, "table_x_range_m": [-0.7, -0.3]}})
+    beside = PickPlaceCell(cfg, None, None, None, None, None, None, log=lambda m: None)
+    beside.precheck_location(Location("bin_low", -0.25, 0.40, -0.05, 0.0, "surface"))  # off the table: allowed
