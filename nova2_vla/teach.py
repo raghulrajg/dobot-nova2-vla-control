@@ -35,6 +35,7 @@ class TipReading:
     yaw_deg: float       # tool x about the vertical (= the pendant's Rz with the tool pointing down)
     tilt_deg: float      # tool z from straight down
     model_err_mm: float  # twin FK flange vs the controller's own GetPose
+    hint: str = ""       # why they might differ, if the controller knows
 
 
 def read_tip(connect) -> TipReading:
@@ -42,15 +43,16 @@ def read_tip(connect) -> TipReading:
     with connect() as robot:
         q = robot.get_angle()
         flange_ctrl = robot.get_pose()[:3] / 1000.0
+        hint = getattr(robot, "pose_hint", "")
     T = tool_pose(q)
     err = float(np.linalg.norm(fk(joint_map.servo_to_visual(q), "flange")[:3, 3] - flange_ctrl) * 1000)
-    return TipReading(T[:3, 3].copy(), math.degrees(yaw_of(T)), tilt_deg(T), err)
+    return TipReading(T[:3, 3].copy(), math.degrees(yaw_of(T)), tilt_deg(T), err, hint)
 
 
 def _check_reading(r: TipReading, model_tol_mm, log):
     if r.model_err_mm > model_tol_mm:
         raise TaskError(f"the twin's model is {r.model_err_mm:.1f} mm off the controller's pose, so this reading "
-                        "would be wrong: fix the DH table first (see the twin README)")
+                        "would be wrong: fix the DH table first (see the twin README)" + r.hint)
     if r.tilt_deg > MAX_TILT_DEG:
         log(f"  warning: the tool is tilted {r.tilt_deg:.1f} deg; point it straight down (Rx 180, Ry 0) "
             "for an exact reading")

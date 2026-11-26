@@ -20,6 +20,18 @@ from .feedback import RealtimeFeedback
 
 MODE_DRAG = 6
 
+# GetPose forms, newest firmware first: V4.5+ takes user/tool as keywords, some
+# earlier V4 builds only positionally, and the bare form reports the pose in the
+# user and tool frames currently selected on the pendant.
+POSE_COMMANDS = ("GetPose(user=0,tool=0)", "GetPose(0,0)", "GetPose()")
+
+
+def _is_format_error(e):
+    """ErrorIDs that mean "this firmware wants other parameters"
+    (unknown command, parameter count, type or range)."""
+    eid = e.error_id
+    return eid is not None and (eid in (-10000, -20000) or -60010 < eid <= -30000)
+
 
 def check_joints(servo_deg):
     q = np.asarray(servo_deg, dtype=float).reshape(6)
@@ -37,6 +49,8 @@ class Nova2(DobotTCP):
         self.feedback_port = feedback_port
         self.use_feedback = realtime_feedback
         self.feedback = None
+        self._pose_cmd = None        # the GetPose form this controller accepts, once known
+        self.pose_frame = "tool0"    # "selected" if only the bare GetPose() works
 
     def connect(self):
         super().connect()
@@ -60,6 +74,35 @@ class Nova2(DobotTCP):
         else GetAngle."""
         fb = self.feedback.fresh(0.05) if self.feedback else None
         return fb.q_actual.copy() if fb is not None else self.get_angle()
+
+    def get_pose(self):
+        """Flange pose (user 0, tool 0): x y z [mm], rx ry rz [deg]. Tries
+        the GetPose forms of the different V4 firmwares and keeps the one
+        this controller accepts."""
+        if self._pose_cmd:
+            return self._numbers(self._pose_cmd, 6)
+        errors = []
+        for cmd in POSE_COMMANDS:
+            try:
+                pose = self._numbers(cmd, 6)
+            except DobotError as e:
+                if not _is_format_error(e):
+                    raise
+                errors.append(f"{cmd}: ErrorID {e.error_id}")
+                continue
+            self._pose_cmd = cmd
+            self.pose_frame = "selected" if cmd == "GetPose()" else "tool0"
+            return pose
+        raise DobotError("the controller accepts no GetPose form (" + "; ".join(errors) + ")")
+
+    @property
+    def pose_hint(self):
+        """Added to pose-mismatch errors when the controller can only report
+        the pose in the pendant's selected frames."""
+        if self.pose_frame != "selected":
+            return ""
+        return (" -- this controller reports GetPose() in the user and tool frames selected on the pendant: "
+                "select user frame 0 and tool 0 (no tool) there")
 
     def mode_fast(self):
         fb = self.feedback.fresh(0.05) if self.feedback else None

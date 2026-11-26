@@ -136,7 +136,8 @@ class PickPlaceCell:
         self.log(f"model check: controller vs twin FK {err:.2f} mm")
         if err > self.cfg.robot.model_tol_mm:
             raise DobotError(f"the twin's kinematic model is {err:.1f} mm off the controller's pose: "
-                             "see 'Correction to your DH table' in the manipulator-agent README")
+                             "see 'Correction to your DH table' in the manipulator-agent README"
+                             + getattr(self.robot, "pose_hint", ""))
 
     def move_j(self, q, what="MovJ", table=None):
         """Joint move after checking its whole path against the table."""
@@ -167,7 +168,7 @@ class PickPlaceCell:
         r = self.cfg.robot
         if dp * 1000 > r.reach_tol_mm or dang > ROT_TOL_DEG or dctrl > r.reach_tol_mm + r.model_tol_mm:
             raise DobotError(f"not at {what}: tool tip {dp * 1000:.1f} mm / {dang:.1f} deg off, "
-                             f"controller flange {dctrl:.1f} mm off")
+                             f"controller flange {dctrl:.1f} mm off" + getattr(self.robot, "pose_hint", ""))
 
     def go_home(self):
         q = self.robot.get_angle()

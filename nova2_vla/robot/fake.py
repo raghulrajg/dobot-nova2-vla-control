@@ -25,9 +25,13 @@ _KW = re.compile(r"(\w+)\s*=\s*([-+0-9.eE]+)")
 
 
 class FakeNova2Controller(FakeDobot):
-    def __init__(self, joints=None, servo_deg_per_s=180.0, **kw):
+    def __init__(self, joints=None, servo_deg_per_s=180.0, get_pose_style="keyword", selected_tool=0, **kw):
+        """get_pose_style: which GetPose forms this firmware accepts --
+        "keyword" (all), "positional" (GetPose(0,0) and GetPose()), "bare"
+        (only GetPose(), in the selected tool: 0 = flange, 1 = gripper tip)."""
         super().__init__(joints=joints, **kw)
         self.servo_deg_per_s = servo_deg_per_s
+        self.get_pose_style, self.selected_tool = get_pose_style, selected_tool
         self.servo_count = 0
         self._fb_server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._fb_server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -68,6 +72,13 @@ class FakeNova2Controller(FakeDobot):
 
     # ------------------------------------------------------------ commands
     def _run(self, name, args):
+        if name == "GetPose":
+            a = args.replace(" ", "")
+            accepted = {"keyword": ("user=0,tool=0", "0,0", ""), "positional": ("0,0", ""), "bare": ("",)}
+            if a not in accepted[self.get_pose_style]:
+                return -40001, ""
+            T = fk(joint_map.servo_to_visual(self.joints), "tool" if (a == "" and self.selected_tool) else "flange")
+            return 0, ",".join(f"{v:.4f}" for v in [*(T[:3, 3] * 1000), *euler_xyz_deg(T[:3, :3])])
         if name == "ServoJ":
             if self.mode in (9, 11):
                 return -2, ""

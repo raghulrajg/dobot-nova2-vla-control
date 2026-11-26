@@ -150,3 +150,37 @@ def test_safety_pick_zone_and_tilt():
     assert np.hypot(*(tool_pose(out.q)[:2, 3] - [-0.40, 0.10])) <= 0.05 + 1e-3
     tilted = q0 + np.array([0, 0, 0, 0, 40.0, 0])
     assert "tilted" in " ".join(f.problems(tilted))
+
+
+# ---------------------------------------------------------------- GetPose on older V4 firmware
+
+@pytest.mark.parametrize("style, cmd", [("keyword", "GetPose(user=0,tool=0)"), ("positional", "GetPose(0,0)"),
+                                        ("bare", "GetPose()")])
+def test_get_pose_finds_the_firmware_form(style, cmd):
+    from nova2_vla.twin import fk, joint_map
+    ctrl = FakeNova2Controller(get_pose_style=style).start()
+    try:
+        with Nova2("127.0.0.1", ctrl.port, realtime_feedback=False) as r:
+            p = r.get_pose()
+            assert r._pose_cmd == cmd
+            assert p[:3] / 1000 == pytest.approx(fk(joint_map.servo_to_visual(HOME), "flange")[:3, 3], abs=1e-6)
+            assert r.get_pose()[:3] == pytest.approx(p[:3])             # cached form, no more probing
+            assert ("pendant" in r.pose_hint) == (style == "bare")
+        sent = [a for n, a, _ in ctrl.log if n == "GetPose"]
+        assert sent.count(sent[-1]) == 2
+    finally:
+        ctrl.stop()
+
+
+def test_model_check_explains_a_selected_tool():
+    """Bare GetPose() with the gripper tool selected on the pendant: the
+    model check fails, and says to select tool 0."""
+    from nova2_vla.teach import measure_table
+    from nova2_vla.task import TaskError
+    ctrl = FakeNova2Controller(get_pose_style="bare", selected_tool=1).start()
+    try:
+        with pytest.raises(TaskError, match="select user frame 0 and tool 0"):
+            measure_table(lambda: Nova2("127.0.0.1", ctrl.port, realtime_feedback=False), 1,
+                          ask=lambda _: None, log=lambda _: None)
+    finally:
+        ctrl.stop()
