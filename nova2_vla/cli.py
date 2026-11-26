@@ -256,17 +256,25 @@ def cmd_check(cfg, args):
     if args.robot:
         from .robot.nova2 import Nova2
         from .twin import MODE_NAMES, fk, joint_map
-        with Nova2(cfg.robot.ip, realtime_feedback=cfg.robot.realtime_feedback) as robot:
-            mode = robot.robot_mode()
-            q = robot.get_angle()
-            p = robot.get_pose()
-            model = fk(joint_map.servo_to_visual(q), "flange")[:3, 3] * 1000
-            err = float(np.linalg.norm(model - p[:3]))
-            print(f"\nrobot       {cfg.robot.ip}: {MODE_NAMES.get(mode, mode)}, joints {np.round(q, 2).tolist()}")
-            print(f"model       twin FK vs controller pose: {err:.2f} mm"
-                  + ("" if err <= cfg.robot.model_tol_mm else "  !! see the twin README's DH correction"))
-            print(f"feedback    port 30004 {'ok' if robot.feedback and robot.feedback.fresh(0.5) else 'not available'}")
-            ok = ok and err <= cfg.robot.model_tol_mm
+        from .twin import DobotError
+        try:
+            with Nova2(cfg.robot.ip, realtime_feedback=cfg.robot.realtime_feedback) as robot:
+                mode = robot.robot_mode()
+                q = robot.get_angle()
+                print(f"\nrobot       {cfg.robot.ip}: {MODE_NAMES.get(mode, mode)}, joints {np.round(q, 2).tolist()}")
+                p = robot.get_pose()
+                model = fk(joint_map.servo_to_visual(q), "flange")[:3, 3] * 1000
+                err = float(np.linalg.norm(model - p[:3]))
+                print(f"pose        {robot._pose_cmd} -> x {p[0]:.1f}  y {p[1]:.1f}  z {p[2]:.1f} mm")
+                print(f"model       twin FK vs controller pose: {err:.2f} mm"
+                      + ("" if err <= cfg.robot.model_tol_mm
+                         else "  !! see the twin README's DH correction" + robot.pose_hint))
+                fb = robot.feedback and robot.feedback.fresh(0.5)
+                print(f"feedback    port 30004 {'ok' if fb else 'not available (GetAngle polling is used instead)'}")
+                ok = ok and err <= cfg.robot.model_tol_mm
+        except (DobotError, OSError) as e:
+            print(f"\nrobot       {cfg.robot.ip}: !! {e}")
+            ok = False
     print("\nall good" if ok else "\nsome checks failed (see !!)")
     return 0 if ok else 1
 
