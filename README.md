@@ -127,10 +127,17 @@ pytest -q
 
 ## Commissioning (once)
 
-1. **Table height.** With tool 0 selected, jog the tool tip onto the table,
-   read the flange Z on the pendant, subtract 197 mm and enter it in metres
-   as `robot.table_z_m` in `config/cell.yaml`. Nothing runs on the robot
-   without it.
+1. **Table height.** Close the gripper and run
+   `python -m nova2_vla measure-table --write`. At each prompt, jog the
+   fingertips down from the pendant until a sheet of paper under them just
+   drags, at three spots of the work area, and press Enter. It reads the
+   joints (the arm is never moved or enabled by it), computes the tip
+   height with the twin's FK and writes `robot.table_z_m` (metres) into
+   `config/cell.yaml`. If the spots differ by more than 3 mm it warns and
+   uses the highest. Nothing runs on the robot without this value.
+   By hand instead: with tool 0 selected and the tool pointing straight
+   down, the pendant's Z is the flange; tip = Z − 197 mm, then convert to
+   metres.
 2. **Model check.** `python -m nova2_vla check --robot` compares the twin's
    FK with the controller's own pose (must be under 3 mm). If not, see
    "Correction to your DH table" in the twin's README.
@@ -185,6 +192,19 @@ python -m nova2_vla capture-refs gear_housing --views 4 --description "blue plas
   A place below the table is refused unless it lies outside
   `robot.table_x_range_m` / `table_y_range_m`.
 * A location may also be written `[x, y, z, w]`.
+
+**Teaching a location by touch** (no pendant arithmetic): jog the gripper,
+pointing down and turned the way the part should end up, until its tip
+touches the surface where the part goes, then
+
+```bash
+python -m nova2_vla teach-location bin_A
+```
+
+It writes `x, y, z, w` into `config/locations.json` (`"z": "table"` if the
+tip is on the table itself) and checks the place can be reached. With
+`--tool`, the tip position is taken as the release point instead (e.g. a
+part dropped into a fixture).
 
 **Run tasks:**
 

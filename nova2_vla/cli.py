@@ -5,6 +5,8 @@ Command line.
   python -m nova2_vla shell                       # type commands one after another
   python -m nova2_vla list                        # known objects and locations
   python -m nova2_vla check [--robot]             # GPU / packages / config / reach (/ robot, read only)
+  python -m nova2_vla measure-table --write       # touch the table with the gripper tip -> table_z_m
+  python -m nova2_vla teach-location bin_A        # touch where parts go -> config/locations.json
   python -m nova2_vla capture-refs gear_housing   # reference photos with the wrist camera
   python -m nova2_vla collect --object gear_housing --episodes 50            # self-resetting scripted demos
   python -m nova2_vla collect --object gear_housing --episodes 20 --mode human   # hand-guided demos
@@ -320,6 +322,61 @@ def cmd_train(cfg, args):
     return run(cfg, args.base, args.steps, args.batch, args.output_dir, args.save_freq, extra, args.print_only)
 
 
+def _robot_reader(cfg, args):
+    """connect() for the teach commands: read only, one connection per reading."""
+    from .robot.nova2 import Nova2
+    if args.dry_run:
+        raise TaskError(f"{args.cmd} reads the real robot's joints: there is nothing to measure in a dry run")
+    print(f"reading the gripper tip from the robot at {cfg.robot.ip} -- it is not moved or enabled: "
+          "jog it from the pendant between readings")
+    return lambda: Nova2(cfg.robot.ip, realtime_feedback=False)
+
+
+def cmd_measure_table(cfg, args):
+    from .teach import measure_table, write_table_z
+    from .twin import DobotError
+    connect = _robot_reader(cfg, args)
+    try:
+        m = measure_table(connect, args.points, model_tol_mm=cfg.robot.model_tol_mm)
+    except (DobotError, OSError) as e:
+        print(f"error: cannot read the robot at {cfg.robot.ip}: {e}")
+        return 1
+    print(f"\ntable_z_m: {m.z:.4f}     ({m.z * 1000:.1f} mm; {len(m.readings)} readings, "
+          f"spread {m.spread * 1000:.1f} mm)")
+    if args.write:
+        write_table_z(args.config, m.z)
+        print(f"written to {args.config}")
+    else:
+        print(f"put it under robot: in {args.config}, or run again with --write")
+    print("jog the gripper back up before running tasks")
+    return 0
+
+
+def cmd_teach_location(cfg, args):
+    from .pipeline import PickPlaceCell
+    from .teach import teach_location
+    from .twin import DobotError
+    connect = _robot_reader(cfg, args)
+    path = cfg.path(cfg.paths.locations_file)
+    try:
+        teach_location(connect, path, args.name, "tool" if args.tool else "surface", cfg.robot.table_z_m,
+                       model_tol_mm=cfg.robot.model_tol_mm)
+    except (DobotError, OSError) as e:
+        print(f"error: cannot read the robot at {cfg.robot.ip}: {e}")
+        return 1
+    if cfg.robot.table_z_m is None:
+        print("set robot.table_z_m (measure-table) to check that it can be reached")
+        return 0
+    cell = PickPlaceCell(cfg, None, None, None, None, None, None, log=lambda m: None)   # planning only
+    try:
+        cell.precheck_location(LocationLibrary.load(path, cfg.robot.table_z_m).get(args.name))
+        print(f"{args.name}: reachable")
+    except TaskError as e:
+        print(f"{args.name}: !! {e}")
+        return 2
+    return 0
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(prog="python -m nova2_vla",
                                 description="VLA pick-and-place for the Dobot Nova 2")
@@ -363,6 +420,15 @@ def main(argv=None):
     sp.add_argument("--print-only", action="store_true", help="show the lerobot-train command, don't run it")
     sp.add_argument("extra", nargs=argparse.REMAINDER, help="-- then more lerobot-train options")
 
+    sp = sub.add_parser("measure-table", help="table height from touching it with the gripper tip (robot read only)")
+    sp.add_argument("--points", type=int, default=3, help="spots to touch (default 3)")
+    sp.add_argument("--write", action="store_true", help="write robot.table_z_m into the config file")
+    sp = sub.add_parser("teach-location", help="store the gripper tip's position as a place (robot read only)")
+    sp.add_argument("name")
+    sp.add_argument("--tool", action="store_true",
+                    help="the tip is where it should be when the gripper opens (default: the tip touches "
+                         "the surface the part is set down on)")
+
     args = p.parse_args(argv)
     logging.basicConfig(level=logging.INFO if args.verbose else logging.WARNING,
                         format="%(levelname)s %(name)s: %(message)s")
@@ -374,7 +440,8 @@ def main(argv=None):
     except (ConfigError, OSError) as e:
         sys.exit(f"config error: {e}")
     handlers = {"run": cmd_run, "shell": cmd_shell, "list": cmd_list, "check": cmd_check,
-                "capture-refs": cmd_capture_refs, "collect": cmd_collect, "train": cmd_train}
+                "capture-refs": cmd_capture_refs, "collect": cmd_collect, "train": cmd_train,
+                "measure-table": cmd_measure_table, "teach-location": cmd_teach_location}
     try:
         return handlers[args.cmd](cfg, args)
     except (TaskError, ConfigError) as e:

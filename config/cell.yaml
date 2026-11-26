@@ -4,9 +4,9 @@
 
 robot:
   ip: 192.168.5.1
-  # The table surface in the base frame. REQUIRED on the real robot: with tool 0
-  # selected, jog the tool tip onto the table, read the flange Z on the pendant,
-  # subtract 197 mm, convert to metres. Dry runs use -0.05 if this is empty.
+  # The table surface in the base frame [m]. REQUIRED on the real robot. Measure it:
+  #   python -m nova2_vla measure-table --write
+  # (touch the table with the closed fingertips at 3 spots). Dry runs use -0.05 if empty.
   table_z_m: null
   # table_x_range_m: [-0.70, 0.10]   # table footprint, if places are beside / below it
   # table_y_range_m: [-0.60, 0.60]
