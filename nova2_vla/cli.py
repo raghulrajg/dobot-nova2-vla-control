@@ -5,6 +5,7 @@ Command line.
   python -m nova2_vla shell                       # type commands one after another
   python -m nova2_vla list                        # known objects and locations
   python -m nova2_vla check [--robot]             # GPU / packages / config / reach (/ robot, read only)
+  python -m nova2_vla jog                         # move the arm: keys or drag mode (no pendant needed)
   python -m nova2_vla measure-table --write       # touch the table with the gripper tip -> table_z_m
   python -m nova2_vla teach-location bin_A        # touch where parts go -> config/locations.json
   python -m nova2_vla capture-refs gear_housing   # reference photos with the wrist camera
@@ -305,7 +306,7 @@ def cmd_capture_refs(cfg, args):
             h, w = frame.rgb.shape[:2]
             c = min(cands, key=lambda c: np.hypot((c.box[0] + c.box[2]) / 2 - w / 2, (c.box[1] + c.box[3]) / 2 - h / 2))
             path = folder / f"ref_{time.strftime('%Y%m%d-%H%M%S')}_{i}.png"
-            cv2.imwrite(str(path), cv2.cvtColor(crop(frame.rgb, c.box, 0.1), cv2.COLOR_RGB2BGR))
+            cv2.imwrite(str(path), cv2.cvtColor(crop(frame.rgb, c.box, 0.1, mask=c.mask), cv2.COLOR_RGB2BGR))
             print(f"  saved {path}")
         return 0
     return _session(cfg, args, capture)
@@ -330,48 +331,130 @@ def cmd_train(cfg, args):
     return run(cfg, args.base, args.steps, args.batch, args.output_dir, args.save_freq, extra, args.print_only)
 
 
-def _robot_reader(cfg, args):
-    """connect() for the teach commands: read only, one connection per reading."""
+def _jog_session(cfg, args, body, table_tip_clearance=-0.003):
+    """One connection to the robot for the whole command: enable it, give
+    body(robot, jogger) a Jogger (keys / drag mode) over that connection,
+    stop the robot on anything unexpected."""
+    from .jog import JogAborted, Jogger, KeyReader
+    from .robot.gripper import Gripper, make_gripper
     from .robot.nova2 import Nova2
+    from .twin import DobotError, FakeGripper, GripperError, TableConstraint
+
+    ctrl = None
     if args.dry_run:
-        raise TaskError(f"{args.cmd} reads the real robot's joints: there is nothing to measure in a dry run")
-    print(f"reading the gripper tip from the robot at {cfg.robot.ip} -- it is not moved or enabled: "
-          "jog it from the pendant between readings")
-    return lambda: Nova2(cfg.robot.ip, realtime_feedback=False)
+        from .robot.fake import FakeNova2Controller
+        ctrl = FakeNova2Controller(deg_per_s=600.0).start()
+        robot = Nova2("127.0.0.1", ctrl.port, poll_s=0.01)
+        gripper = Gripper(FakeGripper())
+        print("dry run: a simulated arm on localhost")
+    else:
+        robot = Nova2(cfg.robot.ip, realtime_feedback=cfg.robot.realtime_feedback)
+        try:
+            gripper = make_gripper(cfg.gripper)
+        except (GripperError, OSError) as e:
+            print(f"note: no gripper ({e}); o/c keys are off")
+            gripper = None
+    table = None
+    if cfg.robot.table_z_m is not None:
+        s = cfg.safety
+        # links keep their clearance; the tip may touch (and, measuring the table, go a little below the old value)
+        table = TableConstraint(cfg.robot.table_z_m, s.link_clearance_m, table_tip_clearance,
+                                cfg.robot.table_x_range_m, cfg.robot.table_y_range_m)
+    else:
+        print("note: no table height yet, so steps are not checked against the table: near it, use step 1 (1 mm)")
+    home = np.asarray(cfg.robot.home_servo_deg, float) if cfg.robot.home_servo_deg else None
+    jogger = None
+    try:
+        robot.connect()
+        try:
+            robot.request_control()
+        except DobotError:
+            pass        # firmware without RequestControl, or already in TCP mode
+        robot.enable()
+        print(f"connected to {robot.ip} (one TCP connection), robot enabled -- keep the e-stop within reach")
+        with KeyReader() as keys:
+            jogger = Jogger(robot, keys, gripper, table, home, speed=min(cfg.robot.speed, 10))
+            return body(robot, jogger)
+    except JogAborted:
+        print("stopped")
+        return 1
+    except KeyboardInterrupt:
+        print("\nstopping the robot")
+        _stop_robot(robot)
+        return 130
+    except (DobotError, GripperError, OSError) as e:
+        print(f"error: {e}")
+        _stop_robot(robot)
+        return 1
+    finally:
+        if jogger is not None:
+            try:
+                jogger.close()
+            except Exception:
+                pass
+        if gripper is not None:
+            gripper.disconnect()
+        robot.close()
+        if ctrl:
+            ctrl.stop()
+
+
+def _stop_robot(robot):
+    try:
+        robot.stop()
+    except Exception:
+        pass
+
+
+def cmd_jog(cfg, args):
+    from .jog import JogAborted
+
+    def body(robot, jogger):
+        first = True
+        try:
+            while True:
+                jogger.position("move the arm; Enter shows the tip pose, x ends" if first else "", show_help=first)
+                first = False
+        except JogAborted:
+            return 0
+    return _jog_session(cfg, args, body)
 
 
 def cmd_measure_table(cfg, args):
     from .teach import measure_table, write_table_z
-    from .twin import DobotError
-    connect = _robot_reader(cfg, args)
-    try:
-        m = measure_table(connect, args.points, model_tol_mm=cfg.robot.model_tol_mm)
-    except (DobotError, OSError) as e:
-        print(f"error: cannot read the robot at {cfg.robot.ip}: {e}")
-        return 1
-    print(f"\ntable_z_m: {m.z:.4f}     ({m.z * 1000:.1f} mm; {len(m.readings)} readings, "
-          f"spread {m.spread * 1000:.1f} mm)")
-    if args.write:
-        write_table_z(args.config, m.z)
-        print(f"written to {args.config}")
-    else:
-        print(f"put it under robot: in {args.config}, or run again with --write")
-    print("jog the gripper back up before running tasks")
-    return 0
+
+    def body(robot, jogger):
+        if jogger.gripper is not None:
+            print("closing the gripper: the closed fingertips touch the table")
+            jogger.grip(True)
+        m = measure_table(robot, args.points, ask=jogger.position, model_tol_mm=cfg.robot.model_tol_mm)
+        jogger.up(0.03)
+        print(f"\ntable_z_m: {m.z:.4f}     ({m.z * 1000:.1f} mm; {len(m.readings)} readings, "
+              f"spread {m.spread * 1000:.1f} mm)")
+        if args.dry_run:
+            print("(dry run: not written)")
+        elif args.write:
+            write_table_z(args.config, m.z)
+            print(f"written to {args.config}")
+        else:
+            print(f"put it under robot: in {args.config}, or run again with --write")
+        return 0
+    return _jog_session(cfg, args, body, table_tip_clearance=-0.03)
 
 
 def cmd_teach_location(cfg, args):
     from .pipeline import PickPlaceCell
     from .teach import teach_location
-    from .twin import DobotError
-    connect = _robot_reader(cfg, args)
     path = cfg.path(cfg.paths.locations_file)
-    try:
-        teach_location(connect, path, args.name, "tool" if args.tool else "surface", cfg.robot.table_z_m,
-                       model_tol_mm=cfg.robot.model_tol_mm)
-    except (DobotError, OSError) as e:
-        print(f"error: cannot read the robot at {cfg.robot.ip}: {e}")
-        return 1
+
+    def body(robot, jogger):
+        teach_location(robot, path, args.name, "tool" if args.tool else "surface", cfg.robot.table_z_m,
+                       ask=jogger.position, model_tol_mm=cfg.robot.model_tol_mm)
+        jogger.up(0.03)
+        return 0
+    code = _jog_session(cfg, args, body)
+    if code != 0:
+        return code
     if cfg.robot.table_z_m is None:
         print("set robot.table_z_m (measure-table) to check that it can be reached")
         return 0
@@ -428,10 +511,11 @@ def main(argv=None):
     sp.add_argument("--print-only", action="store_true", help="show the lerobot-train command, don't run it")
     sp.add_argument("extra", nargs=argparse.REMAINDER, help="-- then more lerobot-train options")
 
-    sp = sub.add_parser("measure-table", help="table height from touching it with the gripper tip (robot read only)")
+    sub.add_parser("jog", help="move the arm with the keyboard or by hand (drag mode), no pendant needed")
+    sp = sub.add_parser("measure-table", help="table height from touching it with the gripper tip")
     sp.add_argument("--points", type=int, default=3, help="spots to touch (default 3)")
     sp.add_argument("--write", action="store_true", help="write robot.table_z_m into the config file")
-    sp = sub.add_parser("teach-location", help="store the gripper tip's position as a place (robot read only)")
+    sp = sub.add_parser("teach-location", help="store the gripper tip's position as a place")
     sp.add_argument("name")
     sp.add_argument("--tool", action="store_true",
                     help="the tip is where it should be when the gripper opens (default: the tip touches "
@@ -449,7 +533,7 @@ def main(argv=None):
         sys.exit(f"config error: {e}")
     handlers = {"run": cmd_run, "shell": cmd_shell, "list": cmd_list, "check": cmd_check,
                 "capture-refs": cmd_capture_refs, "collect": cmd_collect, "train": cmd_train,
-                "measure-table": cmd_measure_table, "teach-location": cmd_teach_location}
+                "measure-table": cmd_measure_table, "teach-location": cmd_teach_location, "jog": cmd_jog}
     try:
         return handlers[args.cmd](cfg, args)
     except (TaskError, ConfigError) as e:

@@ -25,13 +25,18 @@ _KW = re.compile(r"(\w+)\s*=\s*([-+0-9.eE]+)")
 
 
 class FakeNova2Controller(FakeDobot):
-    def __init__(self, joints=None, servo_deg_per_s=180.0, get_pose_style="keyword", selected_tool=0, **kw):
+    def __init__(self, joints=None, servo_deg_per_s=180.0, get_pose_style="keyword", selected_tool=0,
+                 frame_commands=True, **kw):
         """get_pose_style: which GetPose forms this firmware accepts --
         "keyword" (all), "positional" (GetPose(0,0) and GetPose()), "bare"
-        (only GetPose(), in the selected tool: 0 = flange, 1 = gripper tip)."""
+        (only GetPose(), in the selected tool: 0 = flange, 1 = gripper tip).
+        frame_commands: whether User(i) / Tool(i) are accepted."""
         super().__init__(joints=joints, **kw)
         self.servo_deg_per_s = servo_deg_per_s
         self.get_pose_style, self.selected_tool = get_pose_style, selected_tool
+        self.frame_commands = frame_commands
+        self.connections = []            # dashboard (29999) clients, for tests
+        self.feedback_connections = []   # real-time feedback (30004) clients
         self.servo_count = 0
         self._fb_server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._fb_server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -57,7 +62,12 @@ class FakeNova2Controller(FakeDobot):
                 return
             threading.Thread(target=self._push_feedback, args=(conn,), daemon=True).start()
 
+    def _serve(self, conn):
+        self.connections.append(conn)
+        super()._serve(conn)
+
     def _push_feedback(self, conn):
+        self.feedback_connections.append(conn)
         with conn:
             while not self._stop.is_set():
                 with self.lock:
@@ -72,6 +82,11 @@ class FakeNova2Controller(FakeDobot):
 
     # ------------------------------------------------------------ commands
     def _run(self, name, args):
+        if name == "Tool" and self.frame_commands:
+            self.selected_tool = int(float(args))
+            return 0, "0"
+        if name == "User" and self.frame_commands:
+            return 0, "0"
         if name == "GetPose":
             a = args.replace(" ", "")
             accepted = {"keyword": ("user=0,tool=0", "0,0", ""), "positional": ("0,0", ""), "bare": ("",)}

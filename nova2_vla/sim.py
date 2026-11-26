@@ -104,7 +104,7 @@ class SimWorld:
 
     def reference_image(self, box: SimBox, size=160):
         """A top-down picture of one box alone, for its objects/<name>/ folder."""
-        img = np.full((size, size, 3), 165, np.uint8)
+        img = np.full((size, size, 3), 128, np.uint8)     # as capture-refs saves them: background greyed out
         px = size / 0.1                                      # 10 cm field
         c, s = math.cos(math.radians(box.yaw_deg)), math.sin(math.radians(box.yaw_deg))
         vv, uu = np.mgrid[0:size, 0:size]
