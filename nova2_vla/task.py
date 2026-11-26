@@ -14,9 +14,10 @@ The operator's request and what it refers to.
 * the location name is a key in the locations JSON file:
       {"units": "mm", "z_reference": "surface",
        "locations": {"bin_A": {"x": -250, "y": 400, "z": -50, "w": 0}}}
-  x, y, z: where the object goes, in the robot base frame (the frame the
-  pendant shows with user 0). w: gripper yaw about the vertical [deg], the
-  pendant's Rz while the tool points straight down (Rx 180, Ry 0).
+  x, y, z: where the object goes, in the robot base frame (user frame 0).
+  w: gripper turn about the vertical [deg] (Rz while the tool points
+  straight down, Rx 180, Ry 0); `jog` shows it as "turn".
+  `teach-location NAME` writes an entry by touching the spot.
   z_reference "surface" (default): z is the surface the object is put on,
   and the release height follows from where the object was gripped;
   "tool": z is the gripper tip height at release.

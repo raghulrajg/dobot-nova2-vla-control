@@ -223,7 +223,8 @@ def test_hand_guided_demo(make_cell):
     from nova2_vla.twin import solve_ik
     s = make_cell("scripted", vla={"fps": 20})
     ds = FakeDataset()
-    rec = EpisodeRecorder(None, None, 20, s.cell.rig.shapes(), dataset=ds)
+    # the simulated hand moves for ~1 s (a real demo takes several): a short episode is enough here
+    rec = EpisodeRecorder(None, None, 20, s.cell.rig.shapes(), dataset=ds, min_frames=3)
     s.cell.recorder = Sampler(rec, s.cell.rig, s.robot, s.cell.gripper, log=lambda m: None)
     box = s.world.box("green_bar")
     script = iter(["", "c", "", "y"])
@@ -252,8 +253,9 @@ def test_hand_guided_demo(make_cell):
     assert r.ok, r.detail
     assert r.grasped_by == "human"
     assert _placed_at(s, "green_bar", "bin_A")
-    assert len(ds.episodes) == 1 and len(ds.episodes[0]) >= 10
+    assert len(ds.episodes) == 1 and len(ds.episodes[0]) >= 3
     assert [n for n, _, _ in s.ctrl.log].count("StartDrag") == 1
+    assert len(s.ctrl.connections) == 1 and not s.ctrl.feedback_connections     # one TCP connection
 
 
 def test_collect_resets_itself(make_cell):

@@ -12,7 +12,7 @@ robot:
   # table_y_range_m: [-0.60, 0.60]
   speed: 20           # MovJ %
   line_speed: 10      # MovL %
-  realtime_feedback: true
+  realtime_feedback: false   # true adds a 2nd TCP connection (port 30004): only if your controller accepts it
 
 gripper:
   type: feetech       # fake = no gripper (bench tests)

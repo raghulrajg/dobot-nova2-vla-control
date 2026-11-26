@@ -113,8 +113,32 @@ packages, and whether every location in `config/locations.json` is
 reachable. Add `--robot` to also connect to the controller (read only).
 
 Put your user in the `dialout` group for the gripper's USB-RS485 adapter.
-The Nova 2 must be on controller firmware V4 (TCP/IP guide V4.x: ports
-29999 and 30004).
+The Nova 2 must be on controller firmware V4 (TCP/IP guide V4.x).
+
+**No pendant, one connection.** Everything — enabling, moving, ServoJ
+streaming, reading joints and pose — goes over a single TCP connection to
+the dashboard port 29999, opened once per command and held until it ends.
+The controller serves one client at a time, so close any other program
+connected to it first (the manipulator-agent scripts, DobotStudio, a
+second `nova2_vla`); if it doesn't answer, the error says so. The 8 ms
+feedback port 30004 would be a second connection, so it is off
+(`robot.realtime_feedback: false`) and joints are read with GetAngle.
+Without a pendant, `python -m nova2_vla jog` moves the arm: keys step the
+gripper tip through the twin's IK (each step a MovJ, checked against the
+table), or `g` switches drag mode on so you can guide it by hand.
+
+| Key | Action |
+|---|---|
+| `w` / `s` | tip +X / −X |
+| `a` / `d` | tip +Y / −Y |
+| `r` / `f` | up / down |
+| `q` / `e` | turn the gripper |
+| `1` `2` `3` `4` | step 1 / 5 / 10 / 50 mm (1 / 5 / 15 / 45°) |
+| `o` / `c` | open / close the gripper |
+| `g` | drag mode on / off (hand-guiding) |
+| `h` | home |
+| Enter | take this position (`measure-table`, `teach-location`) |
+| `x` | stop |
 
 **Try it without hardware first** (fake controller over TCP on localhost,
 rendered wrist camera, simulated gripper, a stand-in policy):
@@ -127,20 +151,18 @@ pytest -q
 
 ## Commissioning (once)
 
-1. **Table height.** Close the gripper and run
-   `python -m nova2_vla measure-table --write`. At each prompt, jog the
-   fingertips down from the pendant until a sheet of paper under them just
-   drags, at three spots of the work area, and press Enter. It reads the
-   joints (the arm is never moved or enabled by it), computes the tip
-   height with the twin's FK and writes `robot.table_z_m` (metres) into
-   `config/cell.yaml`. If the spots differ by more than 3 mm it warns and
-   uses the highest. Nothing runs on the robot without this value.
-   By hand instead: with tool 0 selected and the tool pointing straight
-   down, the pendant's Z is the flange; tip = Z − 197 mm, then convert to
-   metres.
-2. **Model check.** `python -m nova2_vla check --robot` compares the twin's
+1. **Model check.** `python -m nova2_vla check --robot` compares the twin's
    FK with the controller's own pose (must be under 3 mm). If not, see
-   "Correction to your DH table" in the twin's README.
+   "Correction to your DH table" in the twin's README. It also shows which
+   GetPose form your firmware accepts.
+2. **Table height.** `python -m nova2_vla measure-table --write` closes the
+   gripper and, at three spots of the work area, lets you bring the
+   fingertips down (`f` with step `1` near the table, or drag mode) until a
+   sheet of paper under them just drags; press Enter at each. It computes
+   the tip height from the joints with the twin's FK and writes
+   `robot.table_z_m` (metres) into `config/cell.yaml`. If the spots differ
+   by more than 3 mm it warns and uses the highest. Nothing runs on the
+   robot without this value.
 3. **Wrist camera.** The twin's camera frame is the colour camera's optical
    frame (z = view axis). If detections land consistently turned or offset,
    set `cameras.wrist.optical_axis_rotation_deg`, or fix the camera table in
@@ -174,11 +196,10 @@ python -m nova2_vla capture-refs gear_housing --views 4 --description "blue plas
 }
 ```
 
-* `x, y, z` in the robot base frame (the pendant's coordinates with user
-  frame 0), in `units` (`mm` or `m`; a file that looks like the other unit
-  is refused).
-* `w` is the gripper's turn about the vertical in degrees — the pendant's
-  Rz while the tool points straight down (Rx 180, Ry 0). If `w` is out of
+* `x, y, z` in the robot base frame (user frame 0), in `units` (`mm` or
+  `m`; a file that looks like the other unit is refused).
+* `w` is the gripper's turn about the vertical in degrees (Rz with the tool
+  pointing straight down; `jog` shows it as "turn"). If `w` is out of
   reach, `w + 180` is tried (same grip for a parallel gripper; set
   `pick.try_flipped_place: false` if the part's orientation matters).
 * `z_reference: "surface"` (default): `z` is the surface the part is set
@@ -193,13 +214,15 @@ python -m nova2_vla capture-refs gear_housing --views 4 --description "blue plas
   `robot.table_x_range_m` / `table_y_range_m`.
 * A location may also be written `[x, y, z, w]`.
 
-**Teaching a location by touch** (no pendant arithmetic): jog the gripper,
-pointing down and turned the way the part should end up, until its tip
-touches the surface where the part goes, then
+**Teaching a location by touch:** run
 
 ```bash
 python -m nova2_vla teach-location bin_A
 ```
+
+then bring the gripper, pointing down and turned the way the part should
+end up, until its tip touches the surface where the part goes (keys or
+drag mode), and press Enter.
 
 It writes `x, y, z, w` into `config/locations.json` (`"z": "table"` if the
 tip is on the table itself) and checks the place can be reached. With

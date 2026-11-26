@@ -31,6 +31,8 @@ from .localize import height_map
 
 log = logging.getLogger(__name__)
 
+BACKGROUND = 128   # grey that replaces everything outside an object's mask (and pads crops square)
+
 
 @dataclass
 class SceneContext:
@@ -76,7 +78,7 @@ def merge_candidates(cands: List[Candidate], iou=0.5) -> List[Candidate]:
     return kept
 
 
-def square_pad(rgb, value=128):
+def square_pad(rgb, value=BACKGROUND):
     """Letterbox to a square so encoders that centre-crop keep the whole object."""
     h, w = rgb.shape[:2]
     if h == w:
@@ -88,7 +90,14 @@ def square_pad(rgb, value=128):
     return out
 
 
-def crop(rgb, box, pad=0.1, min_size=16):
+def crop(rgb, box, pad=0.1, min_size=16, mask=None):
+    """The box (plus pad) cut from rgb. With a mask, everything outside the
+    object (grown by 2 px) is set to BACKGROUND first, so the match compares
+    the object itself, not how much table a rotated part's box takes in."""
+    if mask is not None:
+        import cv2
+        keep = cv2.dilate(mask.astype(np.uint8), np.ones((5, 5), np.uint8)) > 0
+        rgb = np.where(keep[..., None], rgb, np.uint8(BACKGROUND))
     h, w = rgb.shape[:2]
     x0, y0, x1, y1 = box
     px, py = (x1 - x0) * pad, (y1 - y0) * pad
@@ -220,7 +229,8 @@ class ColorHistEmbedder:
         out = []
         for im in images:
             hsv = cv2.cvtColor(im, cv2.COLOR_RGB2HSV)
-            hist = cv2.calcHist([hsv], [0, 1], None, list(self.bins), [0, 180, 0, 256]).ravel()
+            fg = (np.any(im != BACKGROUND, axis=-1)).astype(np.uint8)    # masked-out background doesn't count
+            hist = cv2.calcHist([hsv], [0, 1], fg if fg.any() else None, list(self.bins), [0, 180, 0, 256]).ravel()
             v = np.sqrt(hist / max(hist.sum(), 1e-9))       # Hellinger: cosine = Bhattacharyya coefficient
             out.append(v / max(np.linalg.norm(v), 1e-9))
         return np.stack(out)
@@ -267,7 +277,7 @@ class ReferenceObjectFinder:
         if not cands:
             return FindResult(None, [], "nothing on the table was found")
         refs = self.reference_embeddings(spec)
-        emb = self.embedder.embed([square_pad(crop(frame.rgb, c.box, self.crop_pad)) for c in cands])
+        emb = self.embedder.embed([square_pad(crop(frame.rgb, c.box, self.crop_pad, mask=c.mask)) for c in cands])
         sims = emb @ refs.T                                   # (candidates, reference views)
         k = min(2, sims.shape[1])
         scores = np.sort(sims, axis=1)[:, -k:].mean(axis=1)

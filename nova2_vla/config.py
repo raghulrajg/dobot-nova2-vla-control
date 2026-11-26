@@ -26,10 +26,11 @@ class RobotConfig:
     table_y_range_m: Optional[Tuple[float, float]] = None
     speed: int = 20                  # MovJ speed / acceleration %
     line_speed: int = 10             # MovL speed / acceleration %
-    speed_factor: Optional[int] = None   # controller global speed %, None = leave as on the pendant
+    speed_factor: Optional[int] = None   # controller global speed %, None = leave as set on the controller
     reach_tol_mm: float = 2.0
     model_tol_mm: float = 3.0
-    realtime_feedback: bool = True   # read joints from port 30004 (8 ms) during ServoJ streaming
+    realtime_feedback: bool = False  # also read joints from port 30004 (8 ms): a SECOND TCP connection,
+    #                                  only if the controller accepts it; off = everything on port 29999
 
 
 @dataclass

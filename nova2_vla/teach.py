@@ -1,16 +1,16 @@
 """
 Teaching by touching: read where the gripper tip is straight from the
-robot's joints (twin FK), so no pendant arithmetic (tool 0 vs tool 1,
-flange vs fingertips, mm vs m) can go wrong.
+robot's joints (twin FK), so no arithmetic (tool vs flange, fingertips,
+mm vs m) can go wrong.
 
   measure-table      touch the table with the closed fingertips at a few
                      spots -> robot.table_z_m
   teach-location     touch the spot where a part should be set down ->
                      an {x, y, z, w} entry in the locations file
 
-The arm is only read, never moved or enabled: jog it from the pendant (or
-hand-guide it) between readings. Each reading opens and closes its own
-connection, so the pendant stays free.
+`ask(prompt)` returns once the arm is in place: on the robot it is
+Jogger.position (keys or drag mode, see jog.py), over the same single
+connection that is read here.
 """
 
 import json
@@ -32,18 +32,16 @@ MAX_TILT_DEG = 5.0
 @dataclass
 class TipReading:
     xyz: np.ndarray      # tool tip in the base frame [m]
-    yaw_deg: float       # tool x about the vertical (= the pendant's Rz with the tool pointing down)
+    yaw_deg: float       # tool x about the vertical (Rz of the tool pointing straight down)
     tilt_deg: float      # tool z from straight down
     model_err_mm: float  # twin FK flange vs the controller's own GetPose
     hint: str = ""       # why they might differ, if the controller knows
 
 
-def read_tip(connect) -> TipReading:
-    """connect() -> a connected robot (context manager)."""
-    with connect() as robot:
-        q = robot.get_angle()
-        flange_ctrl = robot.get_pose()[:3] / 1000.0
-        hint = getattr(robot, "pose_hint", "")
+def read_tip(robot) -> TipReading:
+    q = robot.get_angle()
+    flange_ctrl = robot.get_pose()[:3] / 1000.0
+    hint = getattr(robot, "pose_hint", "")
     T = tool_pose(q)
     err = float(np.linalg.norm(fk(joint_map.servo_to_visual(q), "flange")[:3, 3] - flange_ctrl) * 1000)
     return TipReading(T[:3, 3].copy(), math.degrees(yaw_of(T)), tilt_deg(T), err, hint)
@@ -66,12 +64,12 @@ class TableMeasurement:
     readings: List[TipReading]
 
 
-def measure_table(connect, points=3, ask=input, log=print, model_tol_mm=3.0) -> TableMeasurement:
+def measure_table(robot, points=3, ask=input, log=print, model_tol_mm=3.0) -> TableMeasurement:
     readings = []
     for i in range(points):
-        ask(f"[{i + 1}/{points}] close the gripper, jog the fingertips down until they just touch the table "
-            f"(a sheet of paper under them should just drag){', at another spot' if i else ''}; then press Enter ")
-        r = read_tip(connect)
+        ask(f"[{i + 1}/{points}] bring the closed fingertips down until they just touch the table "
+            f"(a sheet of paper under them should just drag){', at another spot' if i else ''}; then press Enter")
+        r = read_tip(robot)
         _check_reading(r, model_tol_mm, log)
         log(f"  tip at x {r.xyz[0] * 1000:7.1f}  y {r.xyz[1] * 1000:7.1f}  z {r.xyz[2] * 1000:7.1f} mm")
         readings.append(r)
@@ -95,16 +93,16 @@ def write_table_z(config_path, z):
     path.write_text(new)
 
 
-def teach_location(connect, locations_file, name, z_reference="surface", table_z=None, ask=input, log=print,
+def teach_location(robot, locations_file, name, z_reference="surface", table_z=None, ask=input, log=print,
                    model_tol_mm=3.0):
     """Store where the tip is now as location `name`. surface: the tip
     touches the surface the part is set down on; tool: the tip is where
     it should be when the gripper opens."""
     what = ("touches the surface where the part should be set down" if z_reference == "surface"
             else "is where it should be when the gripper opens")
-    ask(f"jog the gripper (pointing straight down, turned as the part should be) until its tip {what}; "
-        "then press Enter ")
-    r = read_tip(connect)
+    ask(f"bring the gripper (pointing straight down, turned as the part should be) until its tip {what}; "
+        "then press Enter")
+    r = read_tip(robot)
     _check_reading(r, model_tol_mm, log)
 
     path = Path(locations_file)

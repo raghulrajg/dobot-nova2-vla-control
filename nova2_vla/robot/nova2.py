@@ -22,7 +22,7 @@ MODE_DRAG = 6
 
 # GetPose forms, newest firmware first: V4.5+ takes user/tool as keywords, some
 # earlier V4 builds only positionally, and the bare form reports the pose in the
-# user and tool frames currently selected on the pendant.
+# controller's global user and tool frames (selected with User(i) / Tool(i)).
 POSE_COMMANDS = ("GetPose(user=0,tool=0)", "GetPose(0,0)", "GetPose()")
 
 
@@ -44,16 +44,26 @@ def check_joints(servo_deg):
 
 
 class Nova2(DobotTCP):
-    def __init__(self, ip="192.168.5.1", port=29999, feedback_port=30004, realtime_feedback=True, **kw):
+    def __init__(self, ip="192.168.5.1", port=29999, feedback_port=30004, realtime_feedback=False, **kw):
         super().__init__(ip, port, **kw)
         self.feedback_port = feedback_port
         self.use_feedback = realtime_feedback
         self.feedback = None
         self._pose_cmd = None        # the GetPose form this controller accepts, once known
+        self._frames_selected = False
         self.pose_frame = "tool0"    # "selected" if only the bare GetPose() works
 
     def connect(self):
-        super().connect()
+        """Dashboard port 29999 -- and, only if realtime_feedback is on,
+        port 30004 as a second connection."""
+        try:
+            super().connect()
+            self.robot_mode()       # the controller answers on this connection
+        except (OSError, DobotError) as e:
+            super().close()
+            raise DobotError(f"no answer from the controller at {self.ip}:{self.port} ({e}). It takes one TCP "
+                             "connection at a time: close every other program connected to it (manipulator-agent "
+                             "scripts, DobotStudio, another nova2_vla) and try again") from None
         if self.use_feedback and self.feedback is None:
             try:
                 self.feedback = RealtimeFeedback(self.ip, self.feedback_port).start()
@@ -92,17 +102,33 @@ class Nova2(DobotTCP):
                 continue
             self._pose_cmd = cmd
             self.pose_frame = "selected" if cmd == "GetPose()" else "tool0"
+            if cmd == "GetPose()":
+                self._select_base_frames()
+                pose = self._numbers(cmd, 6)
             return pose
         raise DobotError("the controller accepts no GetPose form (" + "; ".join(errors) + ")")
+
+    def _select_base_frames(self):
+        """The bare GetPose() reports in the global user / tool frames: make
+        them the base frame and the bare flange (both are also the
+        controller's defaults). Motion here uses joint targets, so this
+        changes no path of ours."""
+        ok = True
+        for cmd in ("User(0)", "Tool(0)"):
+            try:
+                self.send(cmd)
+            except DobotError:
+                ok = False
+        self._frames_selected = ok
 
     @property
     def pose_hint(self):
         """Added to pose-mismatch errors when the controller can only report
-        the pose in the pendant's selected frames."""
-        if self.pose_frame != "selected":
+        the pose in its global frames."""
+        if self.pose_frame != "selected" or self._frames_selected:
             return ""
-        return (" -- this controller reports GetPose() in the user and tool frames selected on the pendant: "
-                "select user frame 0 and tool 0 (no tool) there")
+        return (" -- this controller reports GetPose() in its global user and tool frames, and User(0) / "
+                "Tool(0) were refused (robot disabled?): the reading may be of a tool, not the flange")
 
     def mode_fast(self):
         fb = self.feedback.fresh(0.05) if self.feedback else None
