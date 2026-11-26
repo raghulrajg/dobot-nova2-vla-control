@@ -89,17 +89,24 @@ git submodule update --init
 
 The RTX 5080 is a Blackwell GPU (sm_120): it needs NVIDIA driver 570 or
 newer and a PyTorch build for CUDA 12.8 or newer; older builds import fine
-but have no kernels for it. LeRobot 0.7 needs Python 3.12+ (Ubuntu 24.04's
-default).
+but have no kernels for it.
+
+The cell itself runs on Python 3.10+, but the VLA (LeRobot 0.7) needs
+Python 3.12+. Ubuntu 24.04 has it; on Ubuntu 22.04 (Python 3.10) get it
+with [uv](https://docs.astral.sh/uv/), which installs its own Python into
+the project's `.venv` and leaves the system Python alone:
 
 ```bash
-python3 -m venv .venv
+curl -LsSf https://astral.sh/uv/install.sh | sh
+uv venv --python 3.12 .venv
 source .venv/bin/activate
-pip install --upgrade pip
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
-pip install -e ".[vision,realsense,vla,dev]"
+uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+uv pip install -e ".[vision,realsense,vla,dev]"
 python -m nova2_vla check
 ```
+
+On Ubuntu 24.04 plain `python3 -m venv .venv` and `pip` work the same way.
+`check` should list `lerobot` and `transformers` with versions, and Python 3.12.
 
 `check` prints the GPU, whether this torch build has sm_120 kernels, the
 packages, and whether every location in `config/locations.json` is
@@ -153,8 +160,9 @@ python -m nova2_vla capture-refs gear_housing --views 4 --description "blue plas
   "units": "mm",
   "z_reference": "surface",
   "locations": {
-    "bin_A":     {"x": -250, "y": 400, "z": -50, "w": 0},
-    "fixture_D": {"x": -350, "y": 300, "z": -20, "w": 90, "z_reference": "tool"}
+    "bin_A":     {"x": -250, "y": 400, "z": "table", "w": 0},
+    "shelf_B":   {"x": -150, "y": 420, "z": 95, "w": 90},
+    "fixture_D": {"x": -350, "y": 300, "z": 120, "w": 0, "z_reference": "tool"}
   }
 }
 ```
@@ -170,6 +178,12 @@ python -m nova2_vla capture-refs gear_housing --views 4 --description "blue plas
   down on; the release height follows from where the part was gripped, so
   tall and short products land the same. `"tool"`: `z` is the gripper tip
   height at release, e.g. when you teach it by jogging.
+* `"z": "table"`: set down on the table itself, at `robot.table_z_m`. Use
+  it for every place on the table, so re-measuring the table moves them
+  all with it. Numeric `z` values are in the same base frame as
+  `table_z_m`: a place on a surface 77 mm above an 18 mm table has `z: 95`.
+  A place below the table is refused unless it lies outside
+  `robot.table_x_range_m` / `table_y_range_m`.
 * A location may also be written `[x, y, z, w]`.
 
 **Run tasks:**

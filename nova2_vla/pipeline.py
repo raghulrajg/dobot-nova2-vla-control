@@ -292,6 +292,16 @@ class PickPlaceCell:
     def precheck_location(self, loc: Location):
         """Reachable at all? Checked with a typical release height before
         anything moves; the real plan follows once the grip is known."""
+        t = self.table
+        over_table = all(r is None or r[0] <= v <= r[1] for v, r in ((loc.x, t.x_range), (loc.y, t.y_range)))
+        lowest = self.table_z if loc.z_reference == "surface" else self.table_z + t.tip_clearance
+        if over_table and loc.z < lowest - 0.001:
+            what = "surface" if loc.z_reference == "surface" else "gripper tip height (z_reference tool)"
+            raise TaskError(
+                f"location {loc.name!r}: its {what} z = {loc.z * 1000:.0f} mm is {(lowest - loc.z) * 1000:.0f} mm "
+                f"below the table (robot.table_z_m = {self.table_z * 1000:.0f} mm). For a place on the table use "
+                f"\"z\": \"table\" (or {lowest * 1000:.0f}); for a place beside the table and lower, set "
+                "robot.table_x_range_m / table_y_range_m to the table's footprint")
         tip_z = loc.z + 0.03 if loc.z_reference == "surface" else loc.z
         errors = []
         for yaw in self._place_yaws(loc):
@@ -301,7 +311,7 @@ class PickPlaceCell:
                 return
             except IKError as e:
                 errors.append(str(e))
-        raise TaskError(f"location {loc.name!r} is out of reach or below the table: " + " | ".join(errors))
+        raise TaskError(f"location {loc.name!r} can't be reached safely: " + " | ".join(dict.fromkeys(errors)))
 
     def _place_yaws(self, loc):
         return [loc.w_deg] + ([loc.w_deg + 180.0] if self.cfg.pick.try_flipped_place else [])
